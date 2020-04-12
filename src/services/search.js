@@ -1,98 +1,76 @@
-const _filtros = require('./services/rider');
+const _filters = require('./services/rider');
 const _notificaciones = require('./services/rider');
 const _rider = require('./services/rider');
+const _request = require('./services/rider');
 
 module.exports = {
     searchRider
 }
 
-let state = [
-    {
-        consumer: 'c1',
-        riders: []
-    },
-    {
-        consumer: 'c2',
-        riders: []
-    },
-    {
-        consumer: 'c3',
-        riders: []
+let initModel = {
+    requested_riders: []
+}
+
+const MSGS = {
+    ADD: 'ADD',
+    CLEAR: 'CLEAR',
+    FAIL: 'CLEAR',
+    SUCCESS: 'CLEAR'
+}
+
+let updateModel = (msg, model, id = '') => {
+    switch (msg) {
+        case MSGS.ADD:
+            return model.requested_riders.push(id)
+        case MSGS.CLEAR:
+            return model.requested_riders = []
     }
-];
+}
 
 let searchRider = (query, consumer) => {
 
-    this._filtros.clearRequestedList = [];
-    let promesa;
-    let tries = 0;
+    return new Promise((resolve, reject) => {
 
-    while (tries <= 5) {
+        let model = initModel
+        let tries = 5
 
-        let res = await getNeerestRider(query);
-        res.ok ? tries = 6 : tries++;
-    }
+        let search = () => {
 
-    if (!res.ok)
-        promesa = new Promise((resolve, reject) => resolve({ ok: false }));
+            let rider = await getNeerestRider(query, model);
 
+            if (tries === 0)
+                resolve({ ok: false })
 
-    promesa = new Promise((resolve, reject) => {
-
-        this.counter++;
-
-        if (this.counter == 4) {
-            this.loadingRider = false;
-            this.counter = 0;
-            return this.alert_alta_demanda();
-        }
-
-
-
-        if (!res.ok) {
-            resolve({ ok: false });
-        }
-
-        getNeerestRider(query).then(res => {
-
-            if (!res.ok) {
+            if (!rider.ok)
                 return setTimeout(() => {
-                    resolve({ ok: false })
+                    tries -= 1;
+                    search()
                 }, 5 * 1000);
+
+
+            const handShake = await doHandShake(rider.id);
+
+            if (!handShake.ok)
+                return search()
+
+            const request = await _request.sendRequest(rider.id)
+            model = updateModel(MSGS.ADD, model, rider.id)
+
+            if (!request.ok) {
+                await _request.requestRejected(rider)
+                return search()
             }
 
-            this.vehiculo_alternativo = res.vehiculo;
+            await _request.requestAccepted(rider)
+            resolve({ ok: true, rider: request.rider })
+        }
 
-            handShake(res.id);
-            sleepRider(res.id);
-
-            resolve({ ok: true });
-        });
+        search()
     });
-
-
-    return promesa;
 }
 
 
-getNeerestRider(query).then(res => {
-
-    if (!res.ok) {
-        return new Promise((resolve, reject) => {
-            setTimeout(() => {
-                resolve({ ok: false })
-            }, 5 * 1000);
-        })
-    }
-
-    handShake(res.id);
-    sleepRider(res.id);
-
-    resolve({ ok: true });
-});
-
-
-let sleepRider = (id) => {
+let sleep = (id) => {
     this.timer = setTimeout(async () => {
 
         this._fire.riders_consultados.push(id);
@@ -135,83 +113,73 @@ let sleepRider = (id) => {
 }
 
 
-let handShake = (id) => {
-    this._fire.getRiderPromise(id).then(rider => {
+let doHandShake = (id) => {
+    return new Promise(async (resolve, reject) => {
 
-        if (rider.cliente_activo == '') {
-            this._fire.updateRider(id, 'rider', { cliente_activo: this.usuario._id })
-                .then(() => this.handShake(id));
-        }
+        const rider = await _rider.getRider(id);
 
-        if (rider.cliente_activo != this.usuario._id && rider.cliente_activo != '') {
-            getNeerestRider();
-        }
+        if (rider.cliente_activo != '')
+            resolve({ ok: false })
 
-        if (rider.cliente_activo == this.usuario._id && rider.cliente_activo != '') {
-            sendRiderRequest(id);
-        }
-    });
+        const clientID = new Date().getTime().toString(36);
+        const updatedRider = await _rider.updateRider(id, 'rider', { cliente_activo: clientID })
+
+        if (updatedRider.cliente_activo != clientID && rider.cliente_activo != '')
+            resolve({ ok: false })
+
+        if (updatedRider.cliente_activo === clientID && rider.cliente_activo != '')
+            resolve({ ok: true, rider: updatedRider })
+
+
+        this._rider.getRider(id).then(rider => {
+
+            if (rider.cliente_activo == '') {
+                this._rider.updateRider(id, 'rider', { cliente_activo: this.usuario._id })
+                    .then(() => this.handShake(id));
+            }
+
+            if (rider.cliente_activo != this.usuario._id && rider.cliente_activo != '') {
+                getNeerestRider();
+            }
+
+            if (rider.cliente_activo == this.usuario._id && rider.cliente_activo != '') {
+                sendRiderRequest(id);
+            }
+        });
+    })
+
 }
 
 let getNeerestRider = (query) => {
 
-    const { vehiculo, ciudad, lat, lng } = query;
+    const { ciudad, lat, lng } = query;
 
     return new Promise(async (resolve, reject) => {
 
-        let riders = [];
-
-        riders = await _rider.getRidersCollection({ ciudad, cliente_activo: '' });
+        const riders = await _rider.getAll({ ciudad, cliente_activo: '' });
 
         if (riders.length == 0) {
-            return resolve({ isMoto: false, isBici: false, isAuto: false });
-        }
-
-        const riders_zero = _filtros.filtro_zero(riders);
-
-        const data = _filtros.filtro_uno(riders_zero, lat, lng, vehiculo);
-
-        if (!data.ok) {
             return resolve({ ok: false });
         }
 
-        resolve({ ok: true, id: data.id, vehiculo: data.vehiculo });
-    });
-}
+        const ridersDisponibles = _filtros.ridersDisponibles(riders);
 
-
-let sendRiderRequest = async (id) => {
-
-    this._fire.riders_consultados.push(id);
-
-    await this._fire.updateRider(id, 'rider', {
-        nuevaSolicitud: true,
-        pagoPendiente: true,
-        created: new Date().getTime(),
-        dataPedido: {
-            cliente: {
-                _id: this.usuario._id,
-                nombre: this.usuario.nombre,
-                img: this.usuario.img.url,
-                role: this.usuario.role
-            },
-            pedido: {
-                distancia: this.distancia,
-                tiempo: this.tiempo,
-                origen: this._control.origen,
-                destino: this._control.destino,
-                costo: this.precio
-            }
+        if (!ridersDisponibles.ok) {
+            return resolve({ ok: false });
         }
-    });
 
-    await this._fire.updateRider(id, 'coors', {
-        pagoPendiente: true
-    });
+        const riderCercano = _filtros.riderMasCercano(ridersDisponibles.riders, lat, lng);
 
-    this.subscribeToRider(id);
-    this._fcm.sendPushNotification(id, 'nuevo-pedido');
+        if (!riderCercano.ok) {
+            return resolve({ ok: false });
+        }
+
+        resolve({ ok: true, id: riderCercano.id });
+    });
 }
+
+
+
 
 
 let consumerSleep = () => {

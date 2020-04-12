@@ -12,25 +12,18 @@ let consumer = (channel, queue, consumer) => {
 
         let message = JSON.parse(msg.content.toString())
 
-        let pedido = await obtener_pedido(message.pedido);
+        let order = await getOrder(message.order);
 
-        if (pedido.descartar)
+        if (order.discard)
             return channel.ack(msg);
 
-        let solicitud = {};
+        let search = await _search.searchRider(message, consumer);
 
-        let tries = 0;
-
-        while (tries <= 3) {
-            solicitud = await enviar_solicitud_a_riders(message, consumer);
-            solicitud.ok ? tries = 4 : tries++;
-        }
-
-        if (solicitud.ok)
+        if (search.ok)
             return channel.ack(msg);
 
 
-        await error_solicitud_handler(solicitud, channel)
+        await error_handler(search.riderId, channel)
         channel.ack(msg)
 
 

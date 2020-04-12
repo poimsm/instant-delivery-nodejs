@@ -1,7 +1,5 @@
 export default {
-    rider: {
-      signUp: 'rider_location',
-      signIn: 'rider_state',
-    },
-  };
-  
+ STATE: 'STATE',
+ LOCATION: 'LOCATION',
+ CUSTOMER: 'CUSTOMER'
+}
